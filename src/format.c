@@ -89,6 +89,7 @@ void header_print(const lz4e_header_t *h)
     if (h->flags == FLAG_NONE)           printf("ninguno");
     if (h->flags & FLAG_RICH_TEXT)       printf("RICH_TEXT ");
     if (h->flags & FLAG_MMAP_WRITTEN)    printf("MMAP ");
+    if (h->flags & FLAG_ENCRYPTED)       printf("ENCRYPTED (RC4) ");
     printf("\n");
 
     /* Timestamps */
