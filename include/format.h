@@ -32,7 +32,7 @@
 #define FLAG_NONE           0x00
 #define FLAG_RICH_TEXT      0x01   /* archivo tiene estilos de texto enriquecido */
 #define FLAG_MMAP_WRITTEN   0x02   /* fue escrito con mmap (informativo)         */
-#define FLAG_ENCRYPTED      0x04   /* reservado para uso futuro                  */
+#define FLAG_ENCRYPTED      0x04   /* payload comprimido + encriptado con RC4 */               
 
 /* ── Tipos de estilo para texto enriquecido ─────────────────── */
 #define STYLE_NONE      0x00
