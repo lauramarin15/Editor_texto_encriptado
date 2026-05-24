@@ -26,7 +26,8 @@ SRCS = $(SRC_DIR)/main.c \
        $(SRC_DIR)/gap_buffer.c \
        $(SRC_DIR)/compress.c \
        $(SRC_DIR)/io.c \
-       $(SRC_DIR)/format.c
+       $(SRC_DIR)/format.c \
+	   $(SRC_DIR)/crypto.c
 
 OBJS      = $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/%.o,      $(SRCS))
 OBJS_MMAP = $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/%_mmap.o, $(SRCS))
