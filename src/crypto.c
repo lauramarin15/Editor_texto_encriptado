@@ -17,7 +17,7 @@
  *
  *   cifrado  = 0xE3
  *   keystream= 0xAB  (misma llave = mismo keystream)
- *   original = 0xE3 ^ 0xAB = 0x48  ← recuperado
+ *   original = 0xE3 ^ 0xAB = 0x48  recuperado
  */
 
 #if defined(__APPLE__)
@@ -33,10 +33,29 @@
 #include <sys/mman.h>
 #include "crypto.h"
 
+/*
+ * secure_erase_mem: borra memoria de forma segura.
+ *
+ * Usamos volatile para que el compilador NO pueda eliminar
+ * este loop como "optimizacion de dead store".
+ * Es equivalente a explicit_bzero() en cualquier plataforma.
+ *
+ * La diferencia con memset:
+ *   memset(p, 0, n)  → el compilador PUEDE eliminarlo si detecta
+ *                       que la memoria no se usa despues
+ *   volatile loop    → el compilador NUNCA puede eliminarlo
+ */
+static void secure_erase_mem(void *ptr, size_t len)
+{
+    volatile uint8_t *p = (volatile uint8_t *)ptr;
+    size_t n = len;
+    while (n--) *p++ = 0;
+}
+
 /* ── Fase 1: KSA ─────────────────────────────────────────────────
  *
  * Inicializa S[256] = [0..255] y lo permuta con la llave.
- * La permutación mezcla S de forma que depende completamente
+ * La permutacion mezcla S de forma que depende completamente
  * de la llave.
  */
 void rc4_init(RC4State *state, const uint8_t *key, size_t key_len)
@@ -93,26 +112,20 @@ void rc4_process(RC4State *state, uint8_t *buf, size_t len)
 
 /* ── Borrado seguro ──────────────────────────────────────────────
  *
- * explicit_bzero NO puede ser eliminado por el compilador.
- * memset SÍ puede ser eliminado como "optimización".
+ * Usa volatile loop — el compilador no puede eliminarlo.
+ * Luego libera el bloqueo de pagina con munlock.
  */
 void secure_key_erase(void *key, size_t len)
 {
-#if defined(__APPLE__) || defined(__linux__)
-    explicit_bzero(key, len);
-#else
-    volatile uint8_t *p = (volatile uint8_t *)key;
-    size_t n = len;
-    while (n--) *p++ = 0;
-#endif
+    secure_erase_mem(key, len);
     munlock(key, len);
 }
 
-/* ── Bloqueo de página en RAM ────────────────────────────────────
+/* ── Bloqueo de pagina en RAM ────────────────────────────────────
  *
- * mlock() le dice al kernel: esta página NO puede ir al swap.
- * Sin mlock, la llave podría quedar escrita en el disco
- * aunque la borremos de la RAM después.
+ * mlock() le dice al kernel: esta pagina NO puede ir al swap.
+ * Sin mlock, la llave podria quedar escrita en el disco
+ * aunque la borremos de la RAM despues.
  */
 int secure_key_lock(void *key, size_t len)
 {
@@ -125,15 +138,15 @@ int secure_key_lock(void *key, size_t len)
     return 0;
 }
 
-/* ── Pipeline completo de encriptación ──────────────────────────
+/* ── Pipeline completo de encriptacion ──────────────────────────
  *
  * Orden:
- *   1. rc4_init()      → inicializar con la llave (KSA)
- *   2. rc4_process()   → encriptar el buffer (PRGA + XOR)
- *   3. explicit_bzero  → borrar el estado RC4 (contiene S[256])
- *   4. secure_key_erase→ borrar la llave
+ *   1. rc4_init()         inicializar con la llave (KSA)
+ *   2. rc4_process()      encriptar el buffer (PRGA + XOR)
+ *   3. secure_erase_mem   borrar el estado RC4 (contiene S[256])
+ *   4. secure_key_erase   borrar la llave
  *
- * El caller NO debe usar key después de esta llamada.
+ * El caller NO debe usar key despues de esta llamada.
  */
 void crypto_encrypt(uint8_t *buf, size_t len,
                     uint8_t *key, size_t key_len)
@@ -145,13 +158,13 @@ void crypto_encrypt(uint8_t *buf, size_t len,
 
     /* Borrar el estado — contiene la tabla S que permite
      * reconstruir el keystream */
-    explicit_bzero(&state, sizeof(RC4State));
+    secure_erase_mem(&state, sizeof(RC4State));
 
     /* Borrar la llave del caller */
     secure_key_erase(key, key_len);
 }
 
-/* RC4 es simétrico — la misma operación cifra y descifra */
+/* RC4 es simetrico — la misma operacion cifra y descifra */
 void crypto_decrypt(uint8_t *buf, size_t len,
                     uint8_t *key, size_t key_len)
 {
@@ -161,31 +174,40 @@ void crypto_decrypt(uint8_t *buf, size_t len,
 /* ── Leer llave por consola ──────────────────────────────────────
  *
  * getpass() lee sin mostrar los caracteres en pantalla.
- * Copiamos inmediatamente a out_key (que está mlocked)
+ * Copiamos inmediatamente a out_key (que esta mlocked)
  * y borramos el buffer interno de getpass.
  */
 size_t crypto_read_key(uint8_t *out_key, size_t max_len,
                        const char *prompt)
 {
-    char *pass = getpass(prompt ? prompt : "Contrasena: ");
-    if (!pass) return 0;
-
-    size_t len = strlen(pass);
-
-    if (len < RC4_KEY_MIN) {
-        fprintf(stderr,
-            "[crypto] error: la llave debe tener al menos "
-            "%d caracteres\n", RC4_KEY_MIN);
-        explicit_bzero(pass, len);
-        return 0;
+    /* Mostrar el prompt */
+    if (prompt) {
+        write(STDERR_FILENO, "\r\n", 2);
+        write(STDERR_FILENO, prompt, strlen(prompt));
     }
 
-    if (len > max_len) len = max_len;
+    /* Leer byte a byte hasta Enter, sin mostrar caracteres */
+    size_t len = 0;
+    char c;
+    while (len < max_len) {
+        ssize_t n = read(STDIN_FILENO, &c, 1);
+        if (n <= 0) break;
+        if (c == '\r' || c == '\n') break;
+        if (c == 127 || c == '\b') {
+            /* Backspace */
+            if (len > 0) len--;
+            continue;
+        }
+        out_key[len++] = (uint8_t)c;
+    }
+    write(STDERR_FILENO, "\r\n", 2);
 
-    memcpy(out_key, pass, len);
-
-    /* Borrar el buffer interno de getpass inmediatamente */
-    explicit_bzero(pass, strlen(pass));
+    if (len < RC4_KEY_MIN) {
+        fprintf(stderr, "[crypto] error: minimo %d caracteres\n",
+                RC4_KEY_MIN);
+        secure_erase_mem(out_key, len);
+        return 0;
+    }
 
     return len;
 }
