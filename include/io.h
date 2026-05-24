@@ -1,6 +1,5 @@
 #ifndef IO_H
 #define IO_H
-
 /*
  * io.h — API de I/O con dos implementaciones comparables
  *
@@ -14,8 +13,12 @@
  *   - Usar buffers alineados a PAGE_SIZE (4096 bytes) para reducir
  *     el número de syscalls write() y context switches.
  *   - Con mmap, el kernel gestiona el flushing de páginas.
+ *
+ * Encriptación RC4:
+ *   - key y key_len se pasan desde main antes del modo raw.
+ *   - Si key_len == 0, no se encripta (archivos sin --encrypt).
+ *   - Pipeline mandatorio: COMPRIMIR -> ENCRIPTAR (nunca al revés).
  */
-
 #include <stddef.h>
 #include <stdint.h>
 #include "format.h"
@@ -35,37 +38,45 @@ typedef enum {
 } IOStatus;
 
 /* ── Implementación A: fd + write alineado a página ─────────── */
-
 /*
- * io_write_fd: comprime el contenido del GapBuffer y lo escribe
- * usando open() + write() con buffers de PAGE_SIZE bytes.
+ * io_write_fd: comprime (y encripta si FLAG_ENCRYPTED) el contenido
+ * del GapBuffer y lo escribe usando open() + write() con buffers
+ * de PAGE_SIZE bytes alineados para minimizar syscalls.
  *
- * El buffer de escritura se alinea con posix_memalign() al tamaño
- * de página para minimizar el número de syscalls.
+ * key/key_len: llave RC4. Pasar NULL/0 si no hay encriptación.
  */
-IOStatus io_write_fd(const char *path, GapBuffer *gb, uint8_t flags);
+IOStatus io_write_fd(const char *path, GapBuffer *gb, uint8_t flags,
+                     const uint8_t *key, size_t key_len);
 
 /*
  * io_read_fd: lee el archivo .lz4e con read() en bloques de PAGE_SIZE,
- * descomprime y carga el contenido en un GapBuffer nuevo.
+ * desencripta si FLAG_ENCRYPTED, descomprime y carga en GapBuffer.
  * El caller es responsable de llamar gb_destroy() sobre el resultado.
+ *
+ * key/key_len: llave RC4. Pasar NULL/0 si no hay encriptación.
  */
-GapBuffer *io_read_fd(const char *path, IOStatus *status);
+GapBuffer *io_read_fd(const char *path, IOStatus *status,
+                      const uint8_t *key, size_t key_len);
 
 /* ── Implementación B: mmap ──────────────────────────────────── */
-
 /*
- * io_write_mmap: comprime el contenido del GapBuffer y lo escribe
- * usando mmap() + msync(). El kernel decide cuándo hacer el flush
- * a disco, reduciendo context switches.
+ * io_write_mmap: comprime (y encripta si FLAG_ENCRYPTED) el contenido
+ * del GapBuffer y lo escribe usando mmap() + msync(). El kernel
+ * decide cuándo hacer el flush a disco, reduciendo context switches.
+ *
+ * key/key_len: llave RC4. Pasar NULL/0 si no hay encriptación.
  */
-IOStatus io_write_mmap(const char *path, GapBuffer *gb, uint8_t flags);
+IOStatus io_write_mmap(const char *path, GapBuffer *gb, uint8_t flags,
+                       const uint8_t *key, size_t key_len);
 
 /*
  * io_read_mmap: mapea el archivo en memoria con mmap(MAP_PRIVATE),
- * descomprime y carga en GapBuffer.
+ * desencripta si FLAG_ENCRYPTED, descomprime y carga en GapBuffer.
+ *
+ * key/key_len: llave RC4. Pasar NULL/0 si no hay encriptación.
  */
-GapBuffer *io_read_mmap(const char *path, IOStatus *status);
+GapBuffer *io_read_mmap(const char *path, IOStatus *status,
+                        const uint8_t *key, size_t key_len);
 
 /* ── Helpers ─────────────────────────────────────────────────── */
 const char *io_status_str(IOStatus s);
@@ -75,19 +86,5 @@ const char *io_status_str(IOStatus s);
  * Útil para el comando `editor info`.
  */
 IOStatus io_file_info(const char *path, lz4e_header_t *out_header);
-
-/* ── Versiones con llave para encriptacion RC4 ──────────────── */
-/*
- * Estas funciones reciben la llave directamente como parametro.
- * La llave se pasa desde main antes de entrar al modo raw,
- * evitando el problema de leer desde un terminal en modo raw.
- */
-IOStatus   io_write_fd_key  (const char *path, GapBuffer *gb, uint8_t flags, const uint8_t *key, size_t key_len);
-
-IOStatus   io_write_mmap_key(const char *path, GapBuffer *gb, uint8_t flags, const uint8_t *key, size_t key_len);
-
-GapBuffer *io_read_fd_key   (const char *path, IOStatus *status, const uint8_t *key, size_t key_len);
-
-GapBuffer *io_read_mmap_key (const char *path, IOStatus *status, const uint8_t *key, size_t key_len);
 
 #endif /* IO_H */
