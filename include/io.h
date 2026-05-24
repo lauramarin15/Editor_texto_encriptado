@@ -76,4 +76,18 @@ const char *io_status_str(IOStatus s);
  */
 IOStatus io_file_info(const char *path, lz4e_header_t *out_header);
 
+/* ── Versiones con llave para encriptacion RC4 ──────────────── */
+/*
+ * Estas funciones reciben la llave directamente como parametro.
+ * La llave se pasa desde main antes de entrar al modo raw,
+ * evitando el problema de leer desde un terminal en modo raw.
+ */
+IOStatus   io_write_fd_key  (const char *path, GapBuffer *gb, uint8_t flags, const uint8_t *key, size_t key_len);
+
+IOStatus   io_write_mmap_key(const char *path, GapBuffer *gb, uint8_t flags, const uint8_t *key, size_t key_len);
+
+GapBuffer *io_read_fd_key   (const char *path, IOStatus *status, const uint8_t *key, size_t key_len);
+
+GapBuffer *io_read_mmap_key (const char *path, IOStatus *status, const uint8_t *key, size_t key_len);
+
 #endif /* IO_H */
